@@ -2,6 +2,11 @@
 import re
 import json
 import pandas as pd
+import OpenHowNet
+
+#OpenHowNet.download() 初次运行时需要下载词典
+hownet_dict=OpenHowNet.HowNetDict()
+
 def charnum_to_num(charnum):
     lens={
             '一字':1,
@@ -21,33 +26,37 @@ def charnum_to_num(charnum):
 keywords={
       '中药':['中药','药材'],
       '中草药':['中药','药材'],
-      '歌曲':['歌曲','演唱'],
-      '成语':['成语'],
-      '口语':['口语'],
+      '歌曲':['歌曲','演唱','歌手'],
+      '成语':['成语','词语','口语'],
+    #   '口语':['口语'],
       '俗语':['俗语'],
       '网络流行词':['网络','网络流行词'],
       '网络':['网络','网络流行词'],
       '电影':['电影'],
-      '动物':['动物'],
+      '动物':['动物','地','区'],
       '植物':['植物','树','花'],
       '作物':['植物','作物'],
       '花':['植物','花'],
-      '书':['书','报刊','古文','著作','名著',],
+      '书':['书','报刊','古文','著作','名著','小说'],
       '报刊':['书','报刊'],
       '著作':['书','古文','著作','名著',],
       '名著':['书','古文','著作','名著',],
       '小说':['书','小说','著作','名著',],
-      '称谓':['称谓','职务'],
+      '称谓':['称谓','职务','的人'],
       '职务':['官职','职务'],
       '官职':['官职','职务'],
       '食品':['食品','食物'],
      }
 
+keywords_unmatched = {
+    '成语': ['歌曲', '网络流行词', '著作']
+}
+
 def json_to_dict(url):#读取json文件，转化为dict
     with open(url,'r',encoding='utf-8') as f:
         load_dict=json.load(f)
         return load_dict
-        
+     
 def pre_select(quiz,options=None): #str,str[5]，谜面和选项，返回bool[5],bool=true代表选项筛选后可能对
     poss=[True,True,True,True,True]#谜底都可能正确
     #按字数筛选
@@ -60,7 +69,9 @@ def pre_select(quiz,options=None): #str,str[5]，谜面和选项，返回bool[5]
             if(len(tmp_option)!=num):
                 poss[i]=False
     poss_=poss#保留按字数筛选的副本
-    #按类别筛选
+    
+    ''' 
+    #按类别筛选 错了915个
     quiz_=re.findall('（.*?）',quiz) #假设都有括号
     for key in keywords:
         if(quiz_[0].find(key)!=-1):
@@ -71,6 +82,67 @@ def pre_select(quiz,options=None): #str,str[5]，谜面和选项，返回bool[5]
                         has_keyword=True
                 if(has_keyword==False):
                     poss_[i]=False
+                    ''' 
+              
+    #按类别筛选 发现其他关键词则认为不可能 也错了1074个
+    quiz_=re.findall('（.*?）',quiz) #假设都有括号
+    for key in keywords:
+        if(quiz_[0].find(key)!=-1):
+            for i in range(5): #对每个选项
+                has_keyword=False
+                has_other_keyword=False
+                if key not in keywords_unmatched:
+                    continue
+                for keyword in keywords[key]:#对keywords的每个关键词
+                    if(wiki_dict[options[i]].find(keyword)!=-1):
+                        has_keyword=True
+
+                for other_key in keywords_unmatched[key]:
+                    if(key!=other_key and wiki_dict[options[i]].find(other_key)!=-1):
+                        has_other_keyword=True
+
+                if has_keyword == False and has_other_keyword == True:
+                    poss_[i] = False
+
+    '''
+    #按类别筛选 错了390个
+    quiz_=re.findall('（.*?）',quiz) #假设都有括号
+    for key in keywords:
+        if(quiz_[0].find(key)!=-1):
+            for i in range(5): #对每个选项
+                has_keyword=False
+                has_other_keyword=False
+                for keyword in keywords[key]:#对keywords的每个关键词
+                    if(wiki_dict[options[i]].find(keyword)!=-1):
+                        has_keyword=True
+                for other_key in keywords:
+                    if(key!=other_key and wiki_dict[options[i]].find(other_key)!=-1):
+                        has_other_keyword=True
+                        
+                if(not has_keyword and has_other_keyword):
+                    poss_[i]=False
+                    '''
+                    
+    '''
+    #按类别筛选 HowNet版
+    quiz_=re.findall('（.*?）',quiz) #假设都有括号
+    for key in keywords:
+        if(quiz_[0].find(key)!=-1):
+            for i in range(5): #对每个选项
+                has_keyword=False
+                for keyword in keywords[key]:#对keywords的每个关键词
+                    keyword_HowNetDict=hownet_dict.get(keyword)
+                    for j in range(len(keyword_HowNetDict)):
+                        if(keyword_HowNetDict[j]['Def'].find(keyword)!=-1):
+                            has_keyword=True
+                            
+                    if(wiki_dict[options[i]].find(keyword)!=-1):
+                        has_keyword=True
+                        
+                if(not has_keyword):
+                    poss_[i]=False
+     '''               
+
     #如果按类别筛选筛到一个都不剩了，就返回按字数筛选的                
     all_false=True
     for i in range(5):
@@ -78,15 +150,19 @@ def pre_select(quiz,options=None): #str,str[5]，谜面和选项，返回bool[5]
             all_false=False
     if(all_false==False):
         return poss_
+        
     return poss
+
     
 # quiz='万紫千红次第开 （经济作物）'
 # options=['春花生','夏玉米','水稻','出苗期','小麦']
 train_df = pd.read_csv('data/train.csv')
 wiki_dict=json_to_dict('data/wiki_info_v2.json')
 
+
 error_filter = 0
 total_filter = 0
+
 for idx, row in train_df.iterrows():
     label = int(row['label'])
     options = []
@@ -98,4 +174,6 @@ for idx, row in train_df.iterrows():
         total_filter += (poss[i] == False)
     if poss[label] == False:
         error_filter += 1
+        print(row["riddle"])
+    
 print(error_filter, total_filter)
